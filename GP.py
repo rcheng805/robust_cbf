@@ -21,11 +21,21 @@ class GP:
     def __init__(self, X, Y, kernel='SE', omega=None, l=None, sigma=None, noise=None):
         self.X = X
         self.Y = Y
+        self.X_s = X
+        self.Y_s = Y
         self.kernel = kernel
         self.omega = omega
         self.l = l
         self.sigma = sigma
         self.noise = noise
+        self.K = None
+
+    # Sample subset of data for gradient computation
+    def resample(self, n_samples=120):
+        N = self.X.shape[0]
+        idx = random.sample(range(0, N), min(n_samples, N))
+        self.X_s, self.Y_s = self.X[idx,:], self.Y[idx,:]
+        return self.X_s, self.Y_s
 
     # Set/update input data for model
     def set_XY(self, X, Y):
@@ -42,24 +52,69 @@ class GP:
         diff = np.linalg.norm(x1 - x2)
         return self.sigma**2 * np.exp(-diff**2 / (2*self.l**2))
 
+    # Evaluate derivative of kernel (w.r.t. length scale)
+    def dk_dl(self, x1, x2):
+        diff = np.linalg.norm(x1 - x2)
+        return self.sigma**2 * np.exp(-diff**2 / (2*self.l**2)) * (diff*2 / (self.l**3))
+
+    # Evaluate derivative of kernel (w.r.t. sigma)
+    def dk_ds(self, x1, x2):
+        diff = np.linalg.norm(x1 - x2)
+        return 2*self.sigma * np.exp(-diff**2 / (2*self.l**2))
+
+    # Get covariance matrix given current dataset
     def get_covariance(self):
-        N = len(self.X)
+        N = len(self.X_s)
         K = np.empty((N, N))
         for i in range(N):
             for j in range(i, N):
-                val = self.evaluate_kernel(self.X[i,:], self.X[j,:])
+                val = self.evaluate_kernel(self.X_s[i,:], self.X_s[j,:])
                 if (i == j):
                     K[i, i] = val
                 else:
                     K[i, j] = val
                     K[j, i] = val
+        self.K = K
         return K
+
+    # Get derivative of covariance matrix (w.r.t. length scale and sigma)
+    def get_dK(self):
+        N = len(self.X_s)
+        Kl = np.empty((N, N))
+        Ks = np.empty((N, N))
+        for i in range(N):
+            for j in range(i, N):
+                val_l = self.dk_dl(self.X_s[i,:], self.X_s[j,:])
+                val_s = self.dk_ds(self.X_s[i,:], self.X_s[j,:])
+                if (i == j):
+                    Kl[i, i] = val_l
+                    Ks[i, i] = val_s
+                else:
+                    Kl[i, j] = val_l
+                    Kl[j, i] = val_l
+                    Ks[i, j] = val_s
+                    Ks[j, i] = val_s
+        return Kl, Ks
+
+    # Get gradient of negative log likelihood (w.r.t. length scale, sigma, omega)
+    def likelihood_gradients(self):
+        n = self.X_s.shape[0]
+        d = self.Y_s.shape[1]
+        K = self.get_covariance()
+        Kl, Ks = self.get_dK()
+        Kinv = np.linalg.inv(K)
+        omegainv = np.linalg.inv(self.omega)
+        A = np.matmul(Kinv, np.matmul(self.Y_s, np.matmul(omegainv, np.transpose(self.Y_s))))
+        dL_dl = (d/2)*np.trace(np.matmul(Kinv, Kl)) + (1/2)*np.trace(np.matmul(-Kinv, np.matmul(Kl, A)))
+        dL_ds = (d/2)*np.trace(np.matmul(Kinv, Ks)) + (1/2)*np.trace(np.matmul(-Kinv, np.matmul(Ks, A)))
+        dL_domega = (n/2)*np.transpose(omegainv) - (1/2)*np.matmul(np.matmul(np.matmul(np.matmul(np.transpose(omegainv), np.transpose(self.Y_s)), np.transpose(Kinv)), self.Y_s), np.transpose(omegainv))
+        return dL_dl, dL_ds, dL_domega
 
     def get_X_cov(self, Xnew):
         N = len(self.X)
         K_star = np.empty((N,1))
         for i in range(N):
-            K_star[i,:] = self.evaluate_kernel(X[i,:], Xnew)
+            K_star[i,:] = self.evaluate_kernel(self.X[i,:], Xnew)
         return K_star
 
     def predict(self, Xnew):
@@ -77,40 +132,16 @@ class GP:
 
         return mean, var
 
+    # Compute negative log likelihood
     def log_likelihood(self):
-        raise NotImplementedError("this needs to be implemented to use the model class")
+        n = self.X_s.shape[0]
+        d = self.Y_s.shape[1]
+        self.get_covariance()
+        A = np.matmul(np.matmul(np.matmul(np.linalg.inv(self.K), self.Y_s), self.omega), np.transpose(self.Y_s))
+        L = (n*d/2)*np.log(2*np.pi) + (d/2)*np.log(np.linalg.det(self.K)) + (n/2)*np.log(np.linalg.det(self.omega)) + (1/2)*np.trace(A)
+        return L
 
-    def _log_likelihood_gradients(self):
-        return self.gradient#.copy()
-
-    def objective_function(self):
-        """
-        The objective function for the given algorithm.
-        This function is the true objective, which wants to be minimized.
-        Note that all parameters are already set and in place, so you just need
-        to return the objective function here.
-        For probabilistic models this is the negative log_likelihood
-        (including the MAP prior), so we return it here. If your model is not
-        probabilistic, just return your objective to minimize here!
-        """
-        return -float(self.log_likelihood()) - self.log_prior()
-
-    def objective_function_gradients(self):
-        """
-        The gradients for the objective function for the given algorithm.
-        The gradients are w.r.t. the *negative* objective function, as
-        this framework works with *negative* log-likelihoods as a default.
-        You can find the gradient for the parameters in self.gradient at all times.
-        This is the place, where gradients get stored for parameters.
-        This function is the true objective, which wants to be minimized.
-        Note that all parameters are already set and in place, so you just need
-        to return the gradient here.
-        For probabilistic models this is the gradient of the negative log_likelihood
-        (including the MAP prior), so we return it here. If your model is not
-        probabilistic, just return your *negative* gradient here!
-        """
-        return -(self._log_likelihood_gradients() + self._log_prior_gradients())
-
+# Helper Function to Load in Data
 def process_data(dat, dat_u):
     data_all = np.zeros(( 1, 8, len(dat[0]) ))
     data_u_all = np.zeros(( 1, 2, len(dat[0]) ))
@@ -130,6 +161,7 @@ def process_data(dat, dat_u):
     data_u_all = data_u_all[1:,:,:]
     return data_all, data_u_all
 
+# Process data to get X,Y (training data)
 def get_XY_from_data(dat, dat_u):
     # [p, v, ph, vh] -> [dp, dv, dp_h, dv_h]
     car = Car(0.0, 0.0)
@@ -151,19 +183,61 @@ def get_XY_from_data(dat, dat_u):
 
     return X, Y
 
-def sample_data(X, Y, n_samples=1000):
-    N = X.shape[0]
-    idx = random.sample(range(0, N), min(n_samples, N))
-    return X[idx,:], Y[idx,:]
 
 if __name__ == '__main__':
-    dat = np.load('train_data_i6.npy', allow_pickle=True)
-    dat_u = np.load('train_data_u_i6.npy', allow_pickle=True)
+    # Import dataset
+    dat = np.load('train_data_i7.npy', allow_pickle=True)
+    dat_u = np.load('train_data_u_i7.npy', allow_pickle=True)
     data_all, data_u_all = process_data(dat, dat_u)
     X, Y = get_XY_from_data(data_all, data_u_all)
     print("Imported Data")
+    print(X.shape)
 
-    X_s, Y_s = sample_data(X, Y)
-    gp = GP(X_s, Y_s, omega = np.eye(8), l = 1.0, sigma = 1.0, noise = 0.0)
-    K = gp.get_covariance()
-    print(K.shape)
+    # Initialize GP with random hyperparameters
+    omega_init = 0.1*(np.random.rand(8,8) - 0.5)
+    omega_init = np.eye(8) + (omega_init + omega_init.T)/2
+    gp = GP(X, Y, omega = omega_init, l = 5*np.random.rand(), sigma = 5*np.random.rand(), noise = 0.0)
+
+    # Define gradient descent parameters
+    vals = []
+    params_omega, params_sigma, params_l = [], [], []
+    cur_o, cur_s, cur_l = gp.omega, gp.sigma, gp.l 
+    iters, max_iters = 0, 2000
+    grad_max = 25.0
+    rate = 0.0004
+    while iters < max_iters:
+        prev_o, prev_s, prev_l = gp.omega, gp.sigma, gp.l
+        
+        # Get Gradients
+        gp.resample()
+        dL_dl, dL_ds, dL_domega = gp.likelihood_gradients()
+        dL_dl = np.clip(dL_dl, -grad_max, grad_max)
+        dL_ds = np.clip(dL_ds, -grad_max, grad_max)
+        if (np.amax(dL_domega) > grad_max or np.amin(dL_domega) < grad_max):
+            max_val = max(np.amax(dL_domega), abs(np.amin(dL_domega)))
+            dL_domega = dL_domega * (grad_max / max_val)
+
+        # Gradient descent
+        cur_o = cur_o - rate * dL_domega
+        cur_l = cur_l - rate * dL_dl
+        cur_s = cur_s - rate * dL_ds
+
+        # Update parameters
+        gp.omega, gp.sigma, gp.l = cur_o, cur_s, cur_l
+
+        iters = iters+1 #iteration count
+        value = gp.log_likelihood()
+
+        # Store and save updated parameters
+        params_omega.append(gp.omega)
+        params_sigma.append(gp.sigma)
+        params_l.append(gp.l)
+        vals.append(value)
+        if (iters % 10 == 0):
+            print(iters)
+            print("sigma: ", gp.sigma)
+            print("length: ", gp.l)
+            print("Likelihood for this dataset: ", value)
+        if (iters % 50 == 0):
+            np.save('likelihood_vals_v7', vals)
+            np.save('parameters_v7', [params_omega, params_sigma, params_l])

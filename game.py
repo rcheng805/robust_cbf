@@ -140,7 +140,7 @@ if __name__ == '__main__':
         # data.append(np.array(dat_trial))
         print("Trial " + str(i) + " finished in " + str(round(time.time() - start_time, 1)) + " sec")
         if (i % 5 == 0 and kSave):
-            np.save('train_data_i6.npy', data)
-            np.save('train_data_u_i6.npy', data_u)
+            np.save('train_data_i8.npy', data)
+            np.save('train_data_u_i8.npy', data_u)
 
     # data = np.load('testnp.npy', allow_pickle=True)
