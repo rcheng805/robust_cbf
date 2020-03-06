@@ -2,6 +2,8 @@ import numpy as np
 from car import Car
 import random
 
+kSave = True
+
 class GP:
     """
     General purpose Gaussian process model
@@ -18,13 +20,14 @@ class GP:
         If normalizer is False, no normalization will be done.
     .. Note:: Multiple independent outputs are allowed using columns of Y
     """
-    def __init__(self, X, Y, kernel='SE', omega=None, l=None, sigma=None, noise=None, horizon=50):
+    def __init__(self, X, Y, kernel='SE', omega=None, L=None, l=None, sigma=None, noise=None, horizon=50):
         self.X = X
         self.Y = Y
         self.X_s = X
         self.Y_s = Y
         self.kernel = kernel
         self.omega = omega
+        self.L = L      # Cholesky factorization of omega
         self.l = l
         self.sigma = sigma
         self.noise = noise
@@ -61,7 +64,7 @@ class GP:
     # Evaluate derivative of kernel (w.r.t. length scale)
     def dk_dl(self, x1, x2):
         diff = np.linalg.norm(x1 - x2)
-        return self.sigma**2 * np.exp(-diff**2 / (2*self.l**2)) * (diff*2 / (self.l**3))
+        return self.sigma**2 * np.exp(-diff**2 / (2*self.l**2)) * (diff**2 / (self.l**3))
 
     # Evaluate derivative of kernel (w.r.t. sigma)
     def dk_ds(self, x1, x2):
@@ -109,19 +112,23 @@ class GP:
         K = self.get_covariance()
         Kl, Ks = self.get_dK()
         Kinv = np.linalg.inv(K)
+        # self.omega = np.matmul(self.L, np.transpose(self.L))
         omegainv = np.linalg.inv(self.omega)
         A = np.matmul(Kinv, np.matmul(self.Y_s, np.matmul(omegainv, np.transpose(self.Y_s))))
         dL_dl = (d/2)*np.trace(np.matmul(Kinv, Kl)) + (1/2)*np.trace(np.matmul(-Kinv, np.matmul(Kl, A)))
         dL_ds = (d/2)*np.trace(np.matmul(Kinv, Ks)) + (1/2)*np.trace(np.matmul(-Kinv, np.matmul(Ks, A)))
         dL_domega = (n/2)*np.transpose(omegainv) - (1/2)*np.matmul(np.matmul(np.matmul(np.matmul(np.transpose(omegainv), np.transpose(self.Y_s)), np.transpose(Kinv)), self.Y_s), np.transpose(omegainv))
+        # dL_dL = n*np.linalg.pinv(self.L) - np.matmul(np.matmul(np.matmul(np.matmul(np.matmul(np.transpose(self.L), omegainv), np.transpose(self.Y_s)), Kinv), self.Y_s), omegainv)
+        # dL_dL = np.tril(dL_dL)
         return dL_dl, dL_ds, dL_domega
 
     # Compute negative log likelihood
     def log_likelihood(self):
         n = self.X_s.shape[0]
         d = self.Y_s.shape[1]
+        # self.omega = np.matmul(self.L, np.transpose(self.L))
         self.get_covariance()
-        A = np.matmul(np.matmul(np.matmul(np.linalg.inv(self.K), self.Y_s), self.omega), np.transpose(self.Y_s))
+        A = np.matmul(np.matmul(np.matmul(np.linalg.inv(self.K), self.Y_s), np.linalg.inv(self.omega)), np.transpose(self.Y_s))
         L = (n*d/2)*np.log(2*np.pi) + (d/2)*np.log(np.linalg.det(self.K)) + (n/2)*np.log(np.linalg.det(self.omega)) + (1/2)*np.trace(A)
         return L
 
@@ -240,37 +247,55 @@ if __name__ == '__main__':
     np.save('train_data_all.npy', [X, Y])
     '''
     dat = np.load('train_data_all.npy', allow_pickle=True)
+    d = 4
     X, Y = dat[0], dat[1]
-
-    for iteration in range(1,10):
+    Y_r = Y[:,0:4]
+    Y_h = Y[:,4:8]
+    
+    for iteration in range(4,10):
         # Initialize GP with random hyperparameters
-        omega_init = 0.2*(np.random.rand(8,8) - 0.5)
-        omega_init = np.eye(8) + (omega_init + omega_init.T)/2
-        gp = GP(X, Y, omega = omega_init, l = 100*np.random.rand(), sigma = 5*np.random.rand(), noise = 0.0)
+        L_init = 0.2*(np.random.rand(d,d) - 0.5)
+        L_init = np.eye(d) + np.tril(L_init)
+        omega_init = np.matmul(L_init, np.transpose(L_init))
+        D,V = np.linalg.eig(omega_init)
+        gp = GP(X, Y_h, omega = omega_init, L = L_init, l = 60.0 + 40.0*np.random.rand(), sigma = 14.0 + 8.0*np.random.rand(), noise = 0.0)
 
         # Define gradient descent parameters
         vals = []
         params_omega, params_sigma, params_l = [], [], []
         cur_o, cur_s, cur_l = gp.omega, gp.sigma, gp.l 
-        iters, alter_iter, max_iters = 0, 100, 10000
+        iters, alter_iter, max_iters = 0, 30, 15000
         grad_max = 25.0
-        rate = 0.0005
+        omega_grad_max = 20.0
+        rate = 0.0004
         var = np.random.randint(3)
         while iters < max_iters:
             prev_o, prev_s, prev_l = gp.omega, gp.sigma, gp.l
             
+            if (iters == 8000):
+                rate = 0.0002
+            if (iters == 12000):
+                rate = 0.0002
+
             # Get Gradients
             gp.resample()
             dL_dl, dL_ds, dL_domega = gp.likelihood_gradients()
+            dL_domega = (dL_domega + np.transpose(dL_domega))/2
             dL_dl = np.clip(dL_dl, -grad_max, grad_max)
             dL_ds = np.clip(dL_ds, -grad_max, grad_max)
-            if (np.amax(dL_domega) > grad_max or np.amin(dL_domega) < grad_max):
+            if (np.amax(dL_domega) > omega_grad_max or np.amin(dL_domega) < omega_grad_max):
                 max_val = max(np.amax(dL_domega), abs(np.amin(dL_domega)))
-                dL_domega = dL_domega * (grad_max / max_val)
-
+                dL_domega = dL_domega * (omega_grad_max / max_val)
+            
             # Gradient descent
+            eps = 0.001
             if (var == 0):
                 cur_o = cur_o - rate * dL_domega
+                D, V = np.linalg.eig(cur_o)
+                for i in range(len(D)):
+                    if (D[i] <= eps):
+                        D[i] = eps
+                cur_o = np.matmul(np.matmul(V, np.diag(D)), np.linalg.inv(V))
             elif (var == 1):
                 cur_l = cur_l - rate * dL_dl
             elif (var == 2):
@@ -280,6 +305,7 @@ if __name__ == '__main__':
 
             # Update parameters
             gp.omega, gp.sigma, gp.l = cur_o, cur_s, cur_l
+            gp.omega = (gp.omega + np.transpose(gp.omega))/2
 
             iters = iters+1 #iteration count
             value = gp.log_likelihood()
@@ -303,6 +329,88 @@ if __name__ == '__main__':
                 print("sigma: ", gp.sigma)
                 print("length: ", gp.l)
                 print("Likelihood for this dataset: ", value)
-            if (iters % 50 == 0):
-                np.save('likelihood_vals_v' + str(iteration), vals)
-                np.save('parameters_v' + str(iteration), [params_omega, params_sigma, params_l])
+            if (iters % 50 == 0 and kSave):
+                np.save('likelihood_vals_human_v' + str(iteration), vals)
+                np.save('parameters_human_v' + str(iteration), [params_omega, params_sigma, params_l])
+
+        '''
+        # Initialize GP with random hyperparameters
+        L_init = 0.2*(np.random.rand(d,d) - 0.5)
+        L_init = np.eye(d) + np.tril(L_init)
+        omega_init = np.matmul(L_init, np.transpose(L_init))
+        D,V = np.linalg.eig(omega_init)
+        gp = GP(X, Y_r, omega = omega_init, l = 0.5 + 2.0*np.random.rand(), sigma = 0.02 + 0.2*np.random.rand(), noise = 0.0)
+
+        # Define gradient descent parameters
+        vals = []
+        params_omega, params_sigma, params_l = [], [], []
+        cur_o, cur_s, cur_l = gp.omega, gp.sigma, gp.l 
+        iters, alter_iter, max_iters = 0, 30, 15000
+        grad_max = 25.0
+        omega_grad_max = 20.0
+        rate = 0.0004
+        var = np.random.randint(3)
+        while iters < max_iters:
+            prev_o, prev_s, prev_l = gp.omega, gp.sigma, gp.l
+            
+            if (iters == 8000):
+                rate = 0.0002
+            if (iters == 12000):
+                rate = 0.0002
+
+            # Get Gradients
+            gp.resample()
+            dL_dl, dL_ds, dL_domega = gp.likelihood_gradients()
+            dL_dl = np.clip(dL_dl, -grad_max, grad_max)
+            dL_ds = np.clip(dL_ds, -grad_max, grad_max)
+            if (np.amax(dL_domega) > omega_grad_max or np.amin(dL_domega) < omega_grad_max):
+                max_val = max(np.amax(dL_domega), abs(np.amin(dL_domega)))
+                dL_domega = dL_domega * (omega_grad_max / max_val)
+
+            # Gradient descent
+            eps = 0.001
+            if (var == 0):
+                cur_o = cur_o - rate * dL_domega
+                D, V = np.linalg.eig(cur_o)
+                for i in range(len(D)):
+                    if (D[i] <= eps):
+                        D[i] = eps
+                cur_o = np.matmul(np.matmul(V, np.diag(D)), np.linalg.inv(V))
+            elif (var == 1):
+                cur_l = cur_l - rate * dL_dl
+            elif (var == 2):
+                cur_s = cur_s - rate * dL_ds
+            else:
+                print("Error in parameter update")
+
+            # Update parameters
+            gp.omega, gp.sigma, gp.l = cur_o, cur_s, cur_l
+            gp.omega = (gp.omega + np.transpose(gp.omega))/2
+
+
+            iters = iters+1 #iteration count
+            value = gp.log_likelihood()
+
+            # Store and save updated parameters
+            params_omega.append(gp.omega)
+            params_sigma.append(gp.sigma)
+            params_l.append(gp.l)
+            vals.append(value)
+
+            if (iters % alter_iter == 0):
+                if (var < 2):
+                    var += 1
+                elif (var == 2):
+                    var = 0
+                else:
+                    print("Error in setting variable to update.")
+
+            if (iters % 10 == 0):
+                print(iters)
+                print("sigma: ", gp.sigma)
+                print("length: ", gp.l)
+                print("Likelihood for this dataset: ", value)
+            if (iters % 50 == 0 and kSave):
+                np.save('likelihood_vals_robot_v' + str(iteration), vals)
+                np.save('parameters_robot_v' + str(iteration), [params_omega, params_sigma, params_l])
+    '''

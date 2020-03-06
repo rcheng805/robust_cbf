@@ -108,10 +108,12 @@ def filter_output(agent_idx, agents, x_nom, T=1):
         res = prob.solve()
         if (t == 0):
             ctrl = res.x[0:2]
+            pn, vn = agents[agent_idx].f(x0, ctrl)
+            x_next = np.concatenate([pn, vn])
         pn, vn = agents[agent_idx].f_err(x0, ctrl)
         x0 = np.concatenate([pn, vn], axis=0)
 
-    return ctrl
+    return ctrl, x_next
 
 def filter_output_primal(agent_idx, u_nom, agents, x_nom, T_bar=4):
     N_a = len(agents)

@@ -1,6 +1,9 @@
 import numpy as np
-from car import Car
 import random
+from scipy.stats import chi2
+import pickle
+
+from car import Car
 
 class GP:
     """
@@ -28,13 +31,22 @@ class GP:
         self.l = l
         self.sigma = sigma
         self.noise = noise
-        self.K = None                       # Train GP
+        self.K = None                                   # Train GP
         self.K_obs = np.empty((horizon, horizon))       # Observation GP
         self.K_star = np.empty(horizon)
         self.N_data = 0
         self.horizon = horizon
         self.X_obs = []
         self.Y_obs = []
+
+    def load_parameters(self, file_name):
+        # open a file, where you stored the pickled data
+        file = open(file_name, 'rb')
+        data = pickle.load(file)
+        file.close()
+        self.omega = data['omega']
+        self.sigma = data['sigma']
+        self.l = data['l']
 
     # Sample subset of data for gradient computation
     def resample(self, n_samples=80):
@@ -131,8 +143,8 @@ class GP:
         if (len(self.X_obs) != len(self.Y_obs)):
             print("ERROR: Input/output data dimensions don't match")
         if (len(self.X_obs) > self.horizon):
-            self.X_obs = self.X_obs.pop(0)
-            self.Y_obs = self.Y_obs.pop(0)
+            self.X_obs.pop(0)
+            self.Y_obs.pop(0)
         self.N_data = len(self.X_obs)
 
     # Get K*
@@ -159,12 +171,29 @@ class GP:
     def predict(self, Xnew):
         N = self.N_data
         # K = self.get_covariance()
-        K_inv = np.inv(self.K_obs[0:N,0:N] + self.noise*np.eye(N))
+        K_inv = np.linalg.inv(self.K_obs[0:N,0:N] + self.noise*np.eye(N))
         k_star = self.get_X_cov(Xnew)
-        mean = np.matmul(np.transpose(np.matmul(K_inv, k_star)), self.Y[0:N])
+        mean = np.matmul(np.transpose(np.matmul(K_inv, k_star)), self.Y_obs[0:N])
         Sigma = self.evaluate_kernel(Xnew, Xnew) - np.matmul(np.transpose(np.matmul(K_inv, k_star)), k_star)
         cov = np.kron(Sigma, self.omega)
-        return mean, var
+        return mean, cov
+    
+    def extract_box(self, m_d, cov_d, p_threshold=0.99):
+        # Extract chi2 value
+        Nd = 4
+        kd = chi2.isf(p_threshold, Nd)
+        D, V = np.linalg.eig(cov_d)
+
+        # Populate bounding polytope
+        G = np.zeros((8, 4))
+        g = np.zeros(8)
+        for i in range(4):
+            G[2*i,:] = -V[:,i]
+            g[2*i] = np.sqrt(kd*abs(D[i])) - np.dot(V[:,i], m_d)
+            G[2*i+1,:] = V[:,i]
+            g[2*i+1] = np.sqrt(kd*abs(D[i])) + np.dot(V[:,i], m_d)
+
+        return G, g
 
 # Helper Function to Load in Data
 def process_data(dat, dat_u):
@@ -242,67 +271,7 @@ if __name__ == '__main__':
     dat = np.load('train_data_all.npy', allow_pickle=True)
     X, Y = dat[0], dat[1]
 
-    for iteration in range(1,10):
-        # Initialize GP with random hyperparameters
-        omega_init = 0.2*(np.random.rand(8,8) - 0.5)
-        omega_init = np.eye(8) + (omega_init + omega_init.T)/2
-        gp = GP(X, Y, omega = omega_init, l = 100*np.random.rand(), sigma = 5*np.random.rand(), noise = 0.0)
+    # Initialize GP with random hyperparameters
+    gp = GP(X, Y, l = 100*np.random.rand(), sigma = 5*np.random.rand(), noise = 0.0)
+    gp.load_parameters('hyperparameters_human.pkl')
 
-        # Define gradient descent parameters
-        vals = []
-        params_omega, params_sigma, params_l = [], [], []
-        cur_o, cur_s, cur_l = gp.omega, gp.sigma, gp.l 
-        iters, alter_iter, max_iters = 0, 100, 10000
-        grad_max = 25.0
-        rate = 0.0005
-        var = np.random.randint(3)
-        while iters < max_iters:
-            prev_o, prev_s, prev_l = gp.omega, gp.sigma, gp.l
-            
-            # Get Gradients
-            gp.resample()
-            dL_dl, dL_ds, dL_domega = gp.likelihood_gradients()
-            dL_dl = np.clip(dL_dl, -grad_max, grad_max)
-            dL_ds = np.clip(dL_ds, -grad_max, grad_max)
-            if (np.amax(dL_domega) > grad_max or np.amin(dL_domega) < grad_max):
-                max_val = max(np.amax(dL_domega), abs(np.amin(dL_domega)))
-                dL_domega = dL_domega * (grad_max / max_val)
-
-            # Gradient descent
-            if (var == 0):
-                cur_o = cur_o - rate * dL_domega
-            elif (var == 1):
-                cur_l = cur_l - rate * dL_dl
-            elif (var == 2):
-                cur_s = cur_s - rate * dL_ds
-            else:
-                print("Error in parameter update")
-
-            # Update parameters
-            gp.omega, gp.sigma, gp.l = cur_o, cur_s, cur_l
-
-            iters = iters+1 #iteration count
-            value = gp.log_likelihood()
-
-            # Store and save updated parameters
-            params_omega.append(gp.omega)
-            params_sigma.append(gp.sigma)
-            params_l.append(gp.l)
-            vals.append(value)
-
-            if (iters % alter_iter == 0):
-                if (var < 2):
-                    var += 1
-                elif (var == 2):
-                    var = 0
-                else:
-                    print("Error in setting variable to update.")
-
-            if (iters % 10 == 0):
-                print(iters)
-                print("sigma: ", gp.sigma)
-                print("length: ", gp.l)
-                print("Likelihood for this dataset: ", value)
-            if (iters % 50 == 0):
-                np.save('likelihood_vals_v' + str(iteration), vals)
-                np.save('parameters_v' + str(iteration), [params_omega, params_sigma, params_l])
