@@ -40,7 +40,7 @@ class GP:
         self.Y_obs = []
 
     # Sample subset of data for gradient computation
-    def resample(self, n_samples=80):
+    def resample(self, n_samples=100):
         N = self.X.shape[0]
         idx = random.sample(range(0, N), min(n_samples, N))
         self.X_s, self.Y_s = self.X[idx,:], self.Y[idx,:]
@@ -79,7 +79,7 @@ class GP:
             for j in range(i, N):
                 val = self.evaluate_kernel(self.X_s[i,:], self.X_s[j,:])
                 if (i == j):
-                    K[i, i] = val
+                    K[i, i] = val + self.noise
                 else:
                     K[i, j] = val
                     K[j, i] = val
@@ -246,25 +246,23 @@ if __name__ == '__main__':
     print(Y.shape)
     np.save('train_data_all.npy', [X, Y])
     '''
-    dat = np.load('train_data_all.npy', allow_pickle=True)
+    dat = np.load('train_data.npy', allow_pickle=True)
     d = 4
-    X, Y = dat[0], dat[1]
-    Y_r = Y[:,0:4]
-    Y_h = Y[:,4:8]
-    
-    for iteration in range(4,10):
+    X_r, Y_r, X_h, Y_h = dat[0], dat[1], dat[2], dat[3]
+
+    for iteration in range(1, 10):
         # Initialize GP with random hyperparameters
         L_init = 0.2*(np.random.rand(d,d) - 0.5)
         L_init = np.eye(d) + np.tril(L_init)
         omega_init = np.matmul(L_init, np.transpose(L_init))
         D,V = np.linalg.eig(omega_init)
-        gp = GP(X, Y_h, omega = omega_init, L = L_init, l = 60.0 + 40.0*np.random.rand(), sigma = 14.0 + 8.0*np.random.rand(), noise = 0.0)
+        gp = GP(X_h, Y_h, omega = omega_init, L = L_init, l = 20.0 + 80.0*np.random.rand(), sigma = 8.0 + 16.0*np.random.rand(), noise = 0.001)
 
         # Define gradient descent parameters
         vals = []
         params_omega, params_sigma, params_l = [], [], []
         cur_o, cur_s, cur_l = gp.omega, gp.sigma, gp.l 
-        iters, alter_iter, max_iters = 0, 30, 15000
+        iters, alter_iter, max_iters = 0, 30, 10000
         grad_max = 25.0
         omega_grad_max = 20.0
         rate = 0.0004
@@ -333,30 +331,29 @@ if __name__ == '__main__':
                 np.save('likelihood_vals_human_v' + str(iteration), vals)
                 np.save('parameters_human_v' + str(iteration), [params_omega, params_sigma, params_l])
 
-        '''
         # Initialize GP with random hyperparameters
         L_init = 0.2*(np.random.rand(d,d) - 0.5)
         L_init = np.eye(d) + np.tril(L_init)
         omega_init = np.matmul(L_init, np.transpose(L_init))
         D,V = np.linalg.eig(omega_init)
-        gp = GP(X, Y_r, omega = omega_init, l = 0.5 + 2.0*np.random.rand(), sigma = 0.02 + 0.2*np.random.rand(), noise = 0.0)
+        gp = GP(X_r, Y_r, omega = omega_init, l = 0.5 + 2.0*np.random.rand(), sigma = 0.02 + 0.2*np.random.rand(), noise = 0.001)
 
         # Define gradient descent parameters
         vals = []
         params_omega, params_sigma, params_l = [], [], []
         cur_o, cur_s, cur_l = gp.omega, gp.sigma, gp.l 
-        iters, alter_iter, max_iters = 0, 30, 15000
+        iters, alter_iter, max_iters = 0, 30, 10000
         grad_max = 25.0
-        omega_grad_max = 20.0
-        rate = 0.0004
+        omega_grad_max = 25.0
+        rate = 0.0002
         var = np.random.randint(3)
         while iters < max_iters:
             prev_o, prev_s, prev_l = gp.omega, gp.sigma, gp.l
             
             if (iters == 8000):
-                rate = 0.0002
+                rate = 0.0001
             if (iters == 12000):
-                rate = 0.0002
+                rate = 0.0001
 
             # Get Gradients
             gp.resample()
@@ -378,8 +375,12 @@ if __name__ == '__main__':
                 cur_o = np.matmul(np.matmul(V, np.diag(D)), np.linalg.inv(V))
             elif (var == 1):
                 cur_l = cur_l - rate * dL_dl
+                if (cur_l < eps):
+                    cur_l = eps
             elif (var == 2):
                 cur_s = cur_s - rate * dL_ds
+                if (cur_s < eps):
+                    cur_s = eps
             else:
                 print("Error in parameter update")
 
@@ -413,4 +414,3 @@ if __name__ == '__main__':
             if (iters % 50 == 0 and kSave):
                 np.save('likelihood_vals_robot_v' + str(iteration), vals)
                 np.save('parameters_robot_v' + str(iteration), [params_omega, params_sigma, params_l])
-    '''

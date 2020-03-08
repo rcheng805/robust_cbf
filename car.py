@@ -28,7 +28,7 @@ class Car:
         # Barrier
         self.Ds = 6.0
         self.gamma = 0.5
-        self.eps = 1000000
+        self.eps = 1e6
 
     # Update linearization based on current state
     def update_linearization(self):
@@ -66,7 +66,20 @@ class Car:
         gv = np.array([[self.dt, 0.], [0., self.dt]])
         return fp, gp, fv, gv
 
-    # Project dynamics (with error)
+    # Project human dynamics (with error)
+    def fh_err(self,x):
+        pos = x[0:2]
+        vel = x[2:4]
+        p = pos + vel*self.dt
+        v_nom = vel
+        v = v_nom
+        v[0] = max(-self.max_velocity,
+                              min(v[0], self.max_velocity))
+        v[1] = max(-self.max_velocity,
+                              min(v[1], self.max_velocity))
+        return p, v
+    
+    # Project robot dynamics (with error)
     def f_err(self,x,u):
         pos = x[0:2]
         vel = x[2:4]

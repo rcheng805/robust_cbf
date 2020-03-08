@@ -15,7 +15,7 @@ kDebug = False
 kDraw = False
 kVideo = False
 
-def filter_output(agent_idx, agents, x_nom, T=1):
+def filter_output(agent_idx, agents, x_nom, T=1, G_all=None, g_all=None, m=None, z=None):
     N_a = len(agents)
     x0 = np.array([agents[agent_idx].position[0], agents[agent_idx].position[1],
                    agents[agent_idx].velocity[0], agents[agent_idx].velocity[1]])
@@ -64,6 +64,10 @@ def filter_output(agent_idx, agents, x_nom, T=1):
         # Robust CBC Constraint
         pr, vr = x0[0:2], x0[2:4]
         fp, _, fv, gv = agents[agent_idx].get_dynamics(x0)     # Get robot dynamics
+        if (m is not None):
+            fp = fp + m[0,0:2]
+            fv = fv + m[0,2:4]
+
         idx = 0
         for j in range(len(agents)):
             if (j == agent_idx):
@@ -72,6 +76,15 @@ def filter_output(agent_idx, agents, x_nom, T=1):
             ph, _, vh, _ = agents[j].get_dynamics_human(xh, t)
             xh = np.concatenate([ph, vh], axis=0)
             fp_h, _, fv_h, _ = agents[j].get_dynamics_human(xh, t+1)  # Project "human" dynamics (t+1 steps)
+            if (m is not None):
+                fp_h = fp_h + m[j,0:2]
+                fv_h = fv_h + m[j,2:4]
+
+            if (z is not None):
+                zp_max = z[0,0]
+                zv_max = z[0,1]
+                zph_max = z[j,0]
+                zvh_max = z[j,1]
 
             den_p = max(np.linalg.norm(fp - fp_h) + zp_max + zph_max, eps_m)
             den_m = max(np.linalg.norm(fp - fp_h) - zp_max - zph_max, eps_m)
@@ -79,16 +92,22 @@ def filter_output(agent_idx, agents, x_nom, T=1):
             H1 = np.hstack([-(fv - fv_h) / den_m, -(fp - fp_h) / den_m, (fv - fv_h) / den_m, (fp - fp_h) / den_m ])
             H2 = np.hstack([ -gv / den_m , np.zeros((2,2)), gv / den_m, np.zeros((2,2)) ])
             H3 = -np.matmul((fp - fp_h), gv) / den_p
-            G = np.kron(np.eye(2), np.array([[1, 0, 0, 0], [-1, 0, 0, 0], [0, 1, 0, 0], [0, -1, 0, 0], [0, 0, 1, 0], [0, 0, -1, 0], [0, 0, 0, 1], [0, 0, 0, -1]]))
-            g = np.kron(np.ones(2), np.array([zp_max, zp_max, zv_max, zv_max, zph_max, zph_max, zvh_max, zvh_max]))
-            kc = min(np.dot(fp - fp_h, fv - fv_h) / den_p, np.dot(fp - fp_h, fv - fv_h) / den_m) + np.sqrt(2*amax*(max(den_m - agents[agent_idx].Ds, 0.))) + (agents[agent_idx].gamma - 1)*np.sqrt(2*amax*(max(np.linalg.norm(pr - ph) - agents[agent_idx].Ds, 0.))) + (agents[agent_idx].gamma-1)*np.dot(pr - ph, vr - vh)/(max(np.linalg.norm(pr - ph), eps_m))
+            if (G_all is None):
+                G = np.kron(np.eye(2), np.array([[1, 0, 0, 0], [-1, 0, 0, 0], [0, 1, 0, 0], [0, -1, 0, 0], [0, 0, 1, 0], [0, 0, -1, 0], [0, 0, 0, 1], [0, 0, 0, -1]]))
+            else:
+                G = G_all[j-1,:,:]
+            if (g_all is None):
+                g = np.kron(np.ones(2), np.array([zp_max, zp_max, zv_max, zv_max, zph_max, zph_max, zvh_max, zvh_max]))
+            else:
+                g = g_all[j-1,:]
 
+            kc = min(np.dot(fp - fp_h, fv - fv_h) / den_p, np.dot(fp - fp_h, fv - fv_h) / den_m) + np.sqrt(2*amax*(max(den_m - agents[agent_idx].Ds, 0.))) + (agents[agent_idx].gamma - 1)*np.sqrt(2*amax*(max(np.linalg.norm(pr - ph) - agents[agent_idx].Ds, 0.))) + (agents[agent_idx].gamma-1)*np.dot(pr - ph, vr - vh)/(max(np.linalg.norm(pr - ph), eps_m))
             h_l1 = np.expand_dims(np.hstack([H3, np.zeros(4), -1.0, np.zeros(dual_f*idx), g, np.zeros(dual_f*(len(agents)-2-idx))]), axis=0)
             h_l2 = np.hstack([np.transpose(H2), np.zeros((8, 4)), np.zeros((8,1)), np.zeros((8,dual_f*idx)), -np.transpose(G), np.zeros((8, dual_f*(len(agents)-2-idx)))])
             h_r2 = -H1
             A_np = np.vstack([A_np, h_l1, h_l2])
-            lp = np.hstack((lp, -np.inf, h_r2 - 0.0001*np.ones(8)))
-            up = np.hstack((up, kc, h_r2 + 0.0001*np.ones(8)))
+            lp = np.hstack((lp, -np.inf, h_r2 - 0.001*np.ones(8)))
+            up = np.hstack((up, kc, h_r2 + 0.001*np.ones(8)))
             idx += 1
 
         h_l3 = np.hstack([np.zeros((duals, 7)), -np.eye(duals)])
@@ -110,10 +129,10 @@ def filter_output(agent_idx, agents, x_nom, T=1):
             ctrl = res.x[0:2]
             pn, vn = agents[agent_idx].f(x0, ctrl)
             x_next = np.concatenate([pn, vn])
-        pn, vn = agents[agent_idx].f_err(x0, ctrl)
-        x0 = np.concatenate([pn, vn], axis=0)
+        # pn, vn = agents[agent_idx].f_err(x0, ctrl)
+        # x0 = np.concatenate([pn, vn], axis=0)
 
-    return ctrl, x_next
+    return ctrl #, x0
 
 def filter_output_primal(agent_idx, u_nom, agents, x_nom, T_bar=4):
     N_a = len(agents)
@@ -229,6 +248,7 @@ def get_trajectory(agent, goal=None, N=12, agents=None, agent_idx=None):
     R = 0.02*sparse.eye(nu)
 
     # Initial and reference states
+    x_init = np.array([agent.position[0], agent.position[1], agent.velocity[0], agent.velocity[1]])
     x0 = np.array([agent.position[0], agent.position[1], agent.velocity[0], agent.velocity[1]])
     if (goal is None):
         xg = np.array([agent.goal[0], agent.goal[1], 0.0, 0.0])
@@ -314,7 +334,7 @@ def get_trajectory(agent, goal=None, N=12, agents=None, agent_idx=None):
     u[:nx] = -x0
     prob.update(l=l, u=u)
 
-    return ctrl, x_path, u_path
+    return ctrl, x_path, x_init #, u_path
 
 if __name__ == '__main__':
     print("Control Program Run")

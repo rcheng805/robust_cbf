@@ -8,7 +8,7 @@ kPlot = False
 allvals = []
 allparams = []
 mean_vals = []
-N = 10
+N = 1
 for i in range(N):
     vals = np.load('likelihood_vals_human_v' + str(i) + '.npy')
     params = np.load('parameters_human_v' + str(i) + '.npy', allow_pickle=True)
@@ -16,9 +16,9 @@ for i in range(N):
     allparams.append(params)
     mean_vals.append(np.mean(np.array(allvals[i][-100:-1])))
 val_idx = np.argsort(np.array(mean_vals))
-omega_h = allparams[val_idx[1]][0][-1]
-sigma_h = allparams[val_idx[1]][1][-1]
-l_h = allparams[val_idx[1]][2][-1]
+omega_h = allparams[val_idx[0]][0][-1]
+sigma_h = allparams[val_idx[0]][1][-1]
+l_h = allparams[val_idx[0]][2][-1]
 
 if (kPlot):
     colors = ['dimgray', 'g', 'b', 'brown', 'peru', 'k', 'skyblue', 'y','indigo', 'goldenrod', 'lawngreen', 'r', 'orange', 'b']
@@ -26,7 +26,7 @@ if (kPlot):
     plt.subplot(131)
     for i in range(N):
         plt.plot(np.array(allvals[i]), color=colors[i])
-        plt.ylim(-2000, 20000)
+        # plt.ylim(-2000, 20000)
     # Plot sigma
     plt.subplot(132)
     for i in range(N):
@@ -40,11 +40,11 @@ if (kPlot):
     plt.show()
 
 
-# Load stored parameter values (and corresponding loss)                                                                               
+# Load stored parameter values (and corresponding loss)      
 allvals = []
 allparams = []
 mean_vals = []
-N = 10
+N = 1
 for i in range(N):
     vals = np.load('likelihood_vals_robot_v' + str(i) + '.npy')
     params = np.load('parameters_robot_v' + str(i) + '.npy', allow_pickle=True)
@@ -62,7 +62,7 @@ if (kPlot):
     plt.subplot(131)
     for i in range(N):
         plt.plot(np.array(allvals[i]), color=colors[i])
-        plt.ylim(-2000, 20000)
+        # plt.ylim(-2000, 20000)
     # Plot sigma                                                                                                                          
     plt.subplot(132)
     for i in range(N):

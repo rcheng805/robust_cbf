@@ -22,7 +22,7 @@ class Game:
     def run(self):
 
         ppu = 32
-        T = 200
+        T = 100
 
         # Initialize agents
         N_a = np.random.randint(3, 15)
@@ -40,6 +40,7 @@ class Game:
                         start_collision = True
                         break
                 agents[i] = Car(x1, y1)
+        agents[0].max_acceleration = 5.0
         # Set goal point
         for i in range(N_a):
             start_collision = True
@@ -58,7 +59,7 @@ class Game:
         data_u = []
 
         # Set barrier for each agent
-        horizon_set=[0, 0, 0, 6, 7, 8]
+        horizon_set=[0, 0, 0, 0, 6, 7, 8]
         agents_avoid = [False] * N_a
         for i in range(1, N_a):
             agents[i].Ds = horizon_set[np.random.randint(len(horizon_set))]
@@ -71,8 +72,6 @@ class Game:
                 if event.type == pygame.QUIT:
                     self.exit = True
 
-
-            start_time = time.time()
             u, x_path, _ = get_trajectory(agents[0], N=10)
             u  = filter_output(0, agents, x_path)
             agents_ctrl[0] = u
@@ -120,7 +119,10 @@ class Game:
                         agent2_img, agents[j].position * ppu - (rect.width / 2, rect.height / 2))
 
                 pygame.display.flip()
-            # time.sleep(0.1)
+            '''
+            if (np.linalg.norm(agents[0].position - agents[0].goal) < 0.2):
+                break
+            '''
             self.clock.tick(self.ticks)
         # pygame.quit()
         return data, data_u
@@ -137,8 +139,8 @@ if __name__ == '__main__':
         dat_trial, dat_u_trial = game.run()
         data.append(dat_trial)
         data_u.append(dat_u_trial)
-        # data.append(np.array(dat_trial))
-        print("Trial " + str(i) + " finished in " + str(round(time.time() - start_time, 1)) + " sec")
-        if (i % 5 == 0 and kSave):
-            np.save('train_data_i9.npy', data)
-            np.save('train_data_u_i9.npy', data_u)
+        if (i % 10 == 0 and kSave):
+            print("Trial " + str(i) + " finished in " + str(round(time.time() - start_time, 1)) + " sec")
+            np.save('train_data_i4.npy', data)
+            np.save('train_data_u_i4.npy', data_u)
+  
