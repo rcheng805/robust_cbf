@@ -23,12 +23,10 @@ class Car:
                            [0, 0, 1, 0], [0, 0, 0, 1]])
         self.B = np.array([[0, 0], [0, 0], [self.dt, 0], [0, self.dt]])
 
-        # self.goal = np.array([5., 40.])
-
         # Barrier
-        self.Ds = 6.0
-        self.gamma = 0.5
-        self.eps = 1e6
+        self.Ds = 5.0
+        self.gamma = 0.8
+        self.eps = 1e9
 
     # Update linearization based on current state
     def update_linearization(self):

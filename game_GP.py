@@ -3,11 +3,11 @@ import numpy as np
 import time
 
 from car import Car
-from control import get_trajectory, filter_output
+from control import get_trajectory, filter_output, filter_output_primal
 from GP_predict import GP
 
-kDraw = True
-kSave = False
+kDraw = False
+kSave = True
 
 class Game:
     def __init__(self):
@@ -20,21 +20,26 @@ class Game:
         self.ticks = 60
         self.exit = False
 
-    def run(self):
+    def run(self, seed=None, robust=True):
 
         ppu = 32
         T = 200
 
+        # Random Initialization Seed
+        if (seed is not None):
+            np.random.seed(seed)
+
         # Initialize settings
         eps = 0.001
-        p_threshold = 1 - 0.99
+        p_threshold = 1 - 0.95
         dist_threshold = 1.0
-        coll_threshold = 5.0
+        coll_threshold = 4.99
         success = False
         collision_flag = False
+        min_dist = np.inf
 
         # Initialize agents
-        N_a = np.random.randint(3, 15)
+        N_a = np.random.randint(3, 12)
         agents = [0] * N_a
         agents_ctrl = [0] * N_a
         # Set start point
@@ -100,34 +105,39 @@ class Game:
                 agents_ctrl[j] = u2
                 # Get agent's states (for inference)
                 state[j,:] = x2_0 - x0
+                if (np.linalg.norm(x2_0[0:2] - x0[0:2]) < min_dist):
+                    min_dist = np.linalg.norm(x2_0[0:2] - x0[0:2])
 
-            # Infer uncertainty polytope for robot and other agents
-            if (all_gp[0].N_data > 0):
-                m_d, cov_d = all_gp[0].predict(state[0,:])
-                G_r, g_r = all_gp[0].extract_box(cov_d, p_threshold=p_threshold)       # G: 8x4, g: 8x1
-                m_all[0,:] = m_d
-                z_all[0,0], z_all[0,1] = all_gp[0].extract_norms(cov_d, p_threshold=p_threshold)
+            if (robust):
+                # Infer uncertainty polytope for robot and other agents
+                if (all_gp[0].N_data > 0):
+                    m_d, cov_d = all_gp[0].predict(state[0,:])
+                    G_r, g_r = all_gp[0].extract_box(cov_d, p_threshold=p_threshold)       # G: 8x4, g: 8x1
+                    m_all[0,:] = m_d
+                    z_all[0,0], z_all[0,1] = all_gp[0].extract_norms(cov_d, p_threshold=p_threshold)
 
-            for j in range(1, N_a):
-                if (all_gp[j].N_data > 0):
-                    m_d, cov_d = all_gp[j].predict(state[j,:])
-                    G_h, g_h = all_gp[j].extract_box(cov_d, p_threshold=p_threshold)
-                    m_all[j,:] = m_d
-                    z_all[j,0], z_all[j,1] = all_gp[j].extract_norms(cov_d, p_threshold=p_threshold)
-                    G_all[j-1,0:8,0:4] = G_r
-                    g_all[j-1,0:8] = g_r
-                    if (np.linalg.norm(next_state[j,2:4]) < eps):
-                        G_all[j-1,8:16,4:8] = G_base
-                        g_all[j-1,8:16] = g_base
-                    else:
-                        G_all[j-1,8:16,4:8] = G_h
-                        g_all[j-1,8:16] = g_h
+                for j in range(1, N_a):
+                    if (all_gp[j].N_data > 0):
+                        m_d, cov_d = all_gp[j].predict(state[j,:])
+                        G_h, g_h = all_gp[j].extract_box(cov_d, p_threshold=p_threshold)
+                        m_all[j,:] = m_d
+                        z_all[j,0], z_all[j,1] = all_gp[j].extract_norms(cov_d, p_threshold=p_threshold)
+                        G_all[j-1,0:8,0:4] = G_r
+                        g_all[j-1,0:8] = g_r
+                        if (np.linalg.norm(next_state[j,2:4]) < eps):
+                            G_all[j-1,8:16,4:8] = G_base
+                            g_all[j-1,8:16] = g_base
+                        else:
+                            G_all[j-1,8:16,4:8] = G_h
+                            g_all[j-1,8:16] = g_h
 
-            # Obtain safe control given uncertainty polytopes
-            if (all_gp[0].N_data > 0):
-                u = filter_output(0, agents, x_path, G_all=G_all, g_all=g_all, m=m_all, z=z_all)
+                # Obtain safe control given uncertainty polytopes
+                if (all_gp[0].N_data > 0):
+                    u = filter_output(0, agents, x_path, G_all=G_all, g_all=g_all, m=m_all, z=z_all)
+                else:
+                    u = filter_output(0, agents, x_path)
             else:
-                u = filter_output(0, agents, x_path)
+                u = filter_output_primal(0, agents, x_path)
             agents_ctrl[0] = u
 
             # Add noise to agents' actions and collect data
@@ -148,29 +158,28 @@ class Game:
                     p, v = agents[j].fh_err(xj)
                     x_state[j,:] = xj - x0
                     d_state[j,:] = next_state[j,:] - np.concatenate((p, v))
-                
+            
             # Update GPs
-            all_gp[0].add_data(x_state[0,:], d_state[0,:])
-            all_gp[0].get_obs_covariance()
-            # all_gp[0].update_obs_covariance()
-            for j in range(1, N_a):
-                all_gp[j].add_data(x_state[j,:], d_state[j,:])
-                all_gp[j].get_obs_covariance()
-                # all_gp[j].update_obs_covariance()
+            if (robust):
+                all_gp[0].add_data(x_state[0,:], d_state[0,:])
+                all_gp[0].get_obs_covariance()
+                for j in range(1, N_a):
+                    all_gp[j].add_data(x_state[j,:], d_state[j,:])
+                    all_gp[j].get_obs_covariance()
 
             # Drawing
             if (kDraw):
                 self.screen.fill((220, 220, 220))
                 # Draw other agents
                 for j in range(1, N_a):
-                    pygame.draw.circle(self.screen, [200, 0, 0], (agents[j].position*ppu).astype(int), 50)
+                    pygame.draw.circle(self.screen, [200, 0, 0], (agents[j].position*ppu).astype(int), 80)
                 # Draw our goal
                 agent1_goal = pygame.image.load('star.png')
                 rect = agent1_goal.get_rect()
                 self.screen.blit(agent1_goal, agents[0].goal * ppu -
                                 (rect.width / 2, rect.height / 2))
                 # Draw our agent
-                pygame.draw.circle(self.screen, [0, 0, 200], (agents[0].position*ppu).astype(int), 50)
+                pygame.draw.circle(self.screen, [0, 0, 200], (agents[0].position*ppu).astype(int), 80)
 
                 pygame.display.flip()
             
@@ -178,18 +187,19 @@ class Game:
             for j in range(1, N_a):
                 if (np.linalg.norm(agents[0].position - agents[j].position) < coll_threshold):
                     success = False
-                    collision_flag = True
-            if (collision_flag):
+                    collision_flag = True 
+
+            if (np.linalg.norm(agents[0].position - agents[0].goal) < dist_threshold and collision_flag):
                 success = False
                 break
-            elif (np.linalg.norm(agents[0].position - agents[0].goal) < dist_threshold):
+            elif (np.linalg.norm(agents[0].position - agents[0].goal) < dist_threshold and not collision_flag):
                 success = True
                 break
             else:
                 pass
             
             self.clock.tick(self.ticks)
-        return data, data_u, success, collision_flag
+        return data, data_u, success, collision_flag, i, min_dist
 
 
 if __name__ == '__main__':
@@ -197,18 +207,42 @@ if __name__ == '__main__':
     print("Game Initialized")
     data = []
     data_u = []
-    trials = 500
+    trials = 1000
     start_time = time.time()
+    result_success_robust = []
+    result_success_primal = []
+    result_collision_robust = []
+    result_collision_primal = []
+    result_L_robust = []
+    result_L_primal = []
+    result_dist_robust = []
+    result_dist_primal = []
     for i in range(trials):
+        seed = np.random.randint(4e9)
+        _, _, success_robust, collision_robust, L_robust, dist_robust = game.run(seed=seed, robust=True)
+        _, _, success_primal, collision_primal, L_primal, dist_primal = game.run(seed=seed, robust=False)
+        result_success_robust.append(success_robust)
+        result_collision_robust.append(collision_robust)
+        result_L_robust.append(L_robust)
+        result_dist_robust.append(dist_robust)
+        result_success_primal.append(success_primal)
+        result_collision_primal.append(collision_primal)
+        result_L_primal.append(L_primal)
+        result_dist_primal.append(dist_primal)
+
+        print("Trial " + str(i) + " Completed")
+        '''
         dat_trial, dat_u_trial, success, collision = game.run()
         data.append(dat_trial)
         data_u.append(dat_u_trial)
-        if (success):
+        '''
+        '''
+        if (success_robust):
             print("Trial " + str(i) + " ended in SUCCESS in " + str(round(time.time() - start_time, 1)) + " sec")
-        elif (collision):
+        elif (collision_robust):
             print("Trial " + str(i) + " ended in COLLISION in " + str(round(time.time() - start_time, 1)) + " sec")
         else:
             print("Trial " + str(i) + " ended in NO PATH in " + str(round(time.time() - start_time, 1)) + " sec")
-        if (i % 5 == 0 and kSave):
-            np.save('train_data_i9.npy', data)
-            np.save('train_data_u_i9.npy', data_u)
+        '''
+        if (i % 10 == 0 and kSave):
+            np.save('comparison_results_' + str(start_time) + '.npy', [result_success_robust, result_success_primal, result_collision_robust, result_collision_primal, result_L_robust, result_L_primal, result_dist_robust, result_dist_primal])

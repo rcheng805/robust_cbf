@@ -19,7 +19,7 @@ def filter_output(agent_idx, agents, x_nom, T=1, G_all=None, g_all=None, m=None,
     N_a = len(agents)
     x0 = np.array([agents[agent_idx].position[0], agents[agent_idx].position[1],
                    agents[agent_idx].velocity[0], agents[agent_idx].velocity[1]])
-    amax = agents[agent_idx].max_acceleration
+    amax = 0.8*agents[agent_idx].max_acceleration
 
     # Get dynamics (with error)
     Ad, Bd = agents[agent_idx].update_linearization_err()
@@ -101,7 +101,7 @@ def filter_output(agent_idx, agents, x_nom, T=1, G_all=None, g_all=None, m=None,
             else:
                 g = g_all[j-1,:]
 
-            kc = min(np.dot(fp - fp_h, fv - fv_h) / den_p, np.dot(fp - fp_h, fv - fv_h) / den_m) + np.sqrt(2*amax*(max(den_m - agents[agent_idx].Ds, 0.))) + (agents[agent_idx].gamma - 1)*np.sqrt(2*amax*(max(np.linalg.norm(pr - ph) - agents[agent_idx].Ds, 0.))) + (agents[agent_idx].gamma-1)*np.dot(pr - ph, vr - vh)/(max(np.linalg.norm(pr - ph), eps_m))
+            kc = min(np.dot(fp - fp_h, fv - fv_h) / den_p, np.dot(fp - fp_h, fv - fv_h) / den_m) + np.sqrt(amax*(max(den_m - agents[agent_idx].Ds, 0.))) + (agents[agent_idx].gamma - 1)*np.sqrt(amax*(max(np.linalg.norm(pr - ph) - agents[agent_idx].Ds, 0.))) + (agents[agent_idx].gamma-1)*np.dot(pr - ph, vr - vh)/(max(np.linalg.norm(pr - ph), eps_m))
             h_l1 = np.expand_dims(np.hstack([H3, np.zeros(4), -1.0, np.zeros(dual_f*idx), g, np.zeros(dual_f*(len(agents)-2-idx))]), axis=0)
             h_l2 = np.hstack([np.transpose(H2), np.zeros((8, 4)), np.zeros((8,1)), np.zeros((8,dual_f*idx)), -np.transpose(G), np.zeros((8, dual_f*(len(agents)-2-idx)))])
             h_r2 = -H1
@@ -116,36 +116,30 @@ def filter_output(agent_idx, agents, x_nom, T=1, G_all=None, g_all=None, m=None,
         up = np.hstack((up, np.zeros(duals)))
         Ap = sparse.csc_matrix(A_np)
 
-        # Setup workspace and change alpha parameter
-        if (t >= 0):
-            prob = osqp.OSQP()
-            prob.setup(P, q, Ap, lp, up, verbose=False)
-        else:
-            prob.update(q=q, l=lp, u=up)
-            prob.update(Ax=Ap)
-        # Solve problem
+        # Setup workspace and solve QP
+        prob = osqp.OSQP()
+        prob.setup(P, q, Ap, lp, up, verbose=False)
         res = prob.solve()
         if (t == 0):
             ctrl = res.x[0:2]
-            pn, vn = agents[agent_idx].f(x0, ctrl)
-            x_next = np.concatenate([pn, vn])
+            # pn, vn = agents[agent_idx].f(x0, ctrl)
+            # x_next = np.concatenate([pn, vn])
         # pn, vn = agents[agent_idx].f_err(x0, ctrl)
         # x0 = np.concatenate([pn, vn], axis=0)
 
     return ctrl #, x0
 
-def filter_output_primal(agent_idx, u_nom, agents, x_nom, T_bar=4):
-    N_a = len(agents)
+def filter_output_primal(agent_idx, agents, x_nom, T=1):
     x0 = np.array([agents[agent_idx].position[0], agents[agent_idx].position[1],
                    agents[agent_idx].velocity[0], agents[agent_idx].velocity[1]])
-    amax = agents[agent_idx].max_acceleration
+    amax = 0.8*agents[agent_idx].max_acceleration
 
     # Get dynamics (with error)
     Ad, Bd = agents[agent_idx].update_linearization_err()
     Av = Ad[2:4,:]
     Bv = Bd[2:4,:]
 
-    for t in range(x_nom.shape[1]-1):    
+    for t in range(T):    
         # MPC Problem (u(0), x(1), eps)
         # Minimize position deviation
         P = np.eye(7)
@@ -179,10 +173,10 @@ def filter_output_primal(agent_idx, u_nom, agents, x_nom, T_bar=4):
                            x0[1] - (agents[j].position[1] + agents[j].velocity[1]*agents[j].dt*t)])
             vd = np.array([x0[2] - agents[j].velocity[0],
                            x0[3] - agents[j].velocity[1]])
-            c = pd + vd*dt
-            h_const = np.dot(c, vd) / np.linalg.norm(c) + np.sqrt(2*abs(umax)*(max(np.linalg.norm(c) - agents[agent_idx].Ds, 0))) - (1 - agents[agent_idx].gamma)*np.dot(
-                pd, vd)/np.linalg.norm(pd) - (1 - agents[agent_idx].gamma)*np.sqrt(2*abs(umax)*(max(np.linalg.norm(pd) - agents[agent_idx].Ds, 0)))  # Ignore u_{user}
-            h_u = c*dt/np.linalg.norm(c)
+            c = pd + vd*agents[j].dt
+            h_const = np.dot(c, vd) / np.linalg.norm(c) + np.sqrt(abs(amax)*(max(np.linalg.norm(c) - agents[agent_idx].Ds, 0))) - (1 - agents[agent_idx].gamma)*np.dot(
+                pd, vd)/np.linalg.norm(pd) - (1 - agents[agent_idx].gamma)*np.sqrt(abs(amax)*(max(np.linalg.norm(pd) - agents[agent_idx].Ds, 0)))  # Ignore u_{user}
+            h_u = c*agents[j].dt/np.linalg.norm(c)
 
             ub = h_const
             Ab = -h_u
@@ -202,32 +196,13 @@ def filter_output_primal(agent_idx, u_nom, agents, x_nom, T_bar=4):
         lp = np.hstack((lp, 0.0))
         up = np.hstack((up, np.inf))
 
-        # Create an OSQP object
-        # prob = osqp.OSQP()
-
-        # Setup workspace and change alpha parameter
-        if (t >= 0):
-            prob = osqp.OSQP()
-            prob.setup(P, q, Ap, lp, up, verbose=False)
-        else:
-            prob.update(q=q, l=lp, u=up)
-            prob.update(Ax=Ap)
-        # Solve problem
+        # Setup workspace and solve QP
+        prob = osqp.OSQP()
+        prob.setup(P, q, Ap, lp, up, verbose=False)
         res = prob.solve()
-        if (t == 0):
-            ctrl = res.x[0:2]
-        u_out = res.x[0:2]
-        u_new.append(u_out)
-        u_diff[t, :] = u_out - u_nom[t, :]
-        x0 = np.matmul(A, x0) + np.matmul(B, u_out)
-        path_new.append(x0)
-        if (np.linalg.norm(u_diff[t, :]) > 1.0):
-            bar_flag = True
+        ctrl = res.x[0:2]
 
-    # print(h_const + np.dot(h_u, u_out) + res.x[2])
-    # print("Residual: " + str(res.x[2]))
-    return np.array(u_new), np.transpose(path_new), u_diff, bar_flag
-
+    return ctrl
 
 def get_trajectory(agent, goal=None, N=12, agents=None, agent_idx=None):
     Ad, Bd = agent.update_linearization()

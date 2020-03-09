@@ -40,7 +40,7 @@ class GP:
         self.Y_obs = []
 
     # Sample subset of data for gradient computation
-    def resample(self, n_samples=100):
+    def resample(self, n_samples=80):
         N = self.X.shape[0]
         idx = random.sample(range(0, N), min(n_samples, N))
         self.X_s, self.Y_s = self.X[idx,:], self.Y[idx,:]
@@ -250,29 +250,29 @@ if __name__ == '__main__':
     d = 4
     X_r, Y_r, X_h, Y_h = dat[0], dat[1], dat[2], dat[3]
 
-    for iteration in range(1, 10):
+    for iteration in range(5, 10):
         # Initialize GP with random hyperparameters
         L_init = 0.2*(np.random.rand(d,d) - 0.5)
         L_init = np.eye(d) + np.tril(L_init)
         omega_init = np.matmul(L_init, np.transpose(L_init))
         D,V = np.linalg.eig(omega_init)
-        gp = GP(X_h, Y_h, omega = omega_init, L = L_init, l = 20.0 + 80.0*np.random.rand(), sigma = 8.0 + 16.0*np.random.rand(), noise = 0.001)
+        gp = GP(X_h, Y_h, omega = omega_init, L = L_init, l = 10.0 + 70.0*np.random.rand(), sigma = 8.0 + 16.0*np.random.rand(), noise = 0.001)
 
         # Define gradient descent parameters
         vals = []
         params_omega, params_sigma, params_l = [], [], []
         cur_o, cur_s, cur_l = gp.omega, gp.sigma, gp.l 
-        iters, alter_iter, max_iters = 0, 30, 10000
-        grad_max = 25.0
-        omega_grad_max = 20.0
-        rate = 0.0004
+        iters, alter_iter, max_iters = 0, 30, 15000
+        grad_max = 50.0
+        omega_grad_max = 40.0
+        rate = 0.0005
         var = np.random.randint(3)
         while iters < max_iters:
             prev_o, prev_s, prev_l = gp.omega, gp.sigma, gp.l
             
-            if (iters == 8000):
-                rate = 0.0002
-            if (iters == 12000):
+            if (iters == 5000):
+                rate = 0.0003
+            if (iters == 10000):
                 rate = 0.0002
 
             # Get Gradients
@@ -286,7 +286,7 @@ if __name__ == '__main__':
                 dL_domega = dL_domega * (omega_grad_max / max_val)
             
             # Gradient descent
-            eps = 0.001
+            eps = 0.0005
             if (var == 0):
                 cur_o = cur_o - rate * dL_domega
                 D, V = np.linalg.eig(cur_o)
@@ -336,15 +336,15 @@ if __name__ == '__main__':
         L_init = np.eye(d) + np.tril(L_init)
         omega_init = np.matmul(L_init, np.transpose(L_init))
         D,V = np.linalg.eig(omega_init)
-        gp = GP(X_r, Y_r, omega = omega_init, l = 0.5 + 2.0*np.random.rand(), sigma = 0.02 + 0.2*np.random.rand(), noise = 0.001)
+        gp = GP(X_r, Y_r, omega = omega_init, l = 0.2 + 3.0*np.random.rand(), sigma = 0.01 + 0.2*np.random.rand(), noise = 0.001)
 
         # Define gradient descent parameters
         vals = []
         params_omega, params_sigma, params_l = [], [], []
         cur_o, cur_s, cur_l = gp.omega, gp.sigma, gp.l 
         iters, alter_iter, max_iters = 0, 30, 10000
-        grad_max = 25.0
-        omega_grad_max = 25.0
+        grad_max = 50.0
+        omega_grad_max = 40.0
         rate = 0.0002
         var = np.random.randint(3)
         while iters < max_iters:
@@ -365,7 +365,7 @@ if __name__ == '__main__':
                 dL_domega = dL_domega * (omega_grad_max / max_val)
 
             # Gradient descent
-            eps = 0.001
+            eps = 0.0005
             if (var == 0):
                 cur_o = cur_o - rate * dL_domega
                 D, V = np.linalg.eig(cur_o)

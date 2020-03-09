@@ -21,7 +21,7 @@ class GP:
         If normalizer is False, no normalization will be done.
     .. Note:: Multiple independent outputs are allowed using columns of Y
     """
-    def __init__(self, X, Y, kernel='SE', omega=None, l=None, sigma=None, noise=None, horizon=50):
+    def __init__(self, X, Y, kernel='SE', omega=None, l=None, sigma=None, noise=None, horizon=40):
         self.X = X
         self.Y = Y
         self.X_s = X

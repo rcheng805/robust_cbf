@@ -3,38 +3,39 @@ import matplotlib.pyplot as plt
 import pickle
 
 kPlot = False
+kSave = True
 
 # Load stored parameter values (and corresponding loss)
 allvals = []
 allparams = []
 mean_vals = []
-N = 1
+N = 6
 for i in range(N):
     vals = np.load('likelihood_vals_human_v' + str(i) + '.npy')
     params = np.load('parameters_human_v' + str(i) + '.npy', allow_pickle=True)
     allvals.append(np.array(vals))
     allparams.append(params)
     mean_vals.append(np.mean(np.array(allvals[i][-100:-1])))
-val_idx = np.argsort(np.array(mean_vals))
-omega_h = allparams[val_idx[0]][0][-1]
-sigma_h = allparams[val_idx[0]][1][-1]
-l_h = allparams[val_idx[0]][2][-1]
+val_idx = np.argsort(np.array(mean_vals)).astype(int)
+omega_h = allparams[val_idx[1]][0][-1]
+sigma_h = allparams[val_idx[1]][1][-1]
+l_h = allparams[val_idx[1]][2][-1]
 
 if (kPlot):
     colors = ['dimgray', 'g', 'b', 'brown', 'peru', 'k', 'skyblue', 'y','indigo', 'goldenrod', 'lawngreen', 'r', 'orange', 'b']
     # Plot loss function
     plt.subplot(131)
-    for i in range(N):
+    for i in val_idx[0:2]:
         plt.plot(np.array(allvals[i]), color=colors[i])
         # plt.ylim(-2000, 20000)
     # Plot sigma
     plt.subplot(132)
-    for i in range(N):
+    for i in val_idx[0:2]:
         sigma = allparams[i][1]
         plt.plot(sigma, color=colors[i])
     # Plot length scale (l)
     plt.subplot(133)
-    for i in range(N):
+    for i in val_idx[0:2]:
         l = allparams[i][2]
         plt.plot(l, color=colors[i])
     plt.show()
@@ -44,47 +45,48 @@ if (kPlot):
 allvals = []
 allparams = []
 mean_vals = []
-N = 1
+N = 6
 for i in range(N):
     vals = np.load('likelihood_vals_robot_v' + str(i) + '.npy')
     params = np.load('parameters_robot_v' + str(i) + '.npy', allow_pickle=True)
     allvals.append(np.array(vals))
     allparams.append(params)
     mean_vals.append(np.mean(np.array(allvals[i][-100:-1])))
-val_idx = np.argsort(np.array(mean_vals))
-omega_r = allparams[val_idx[0]][0][-1]
-sigma_r = allparams[val_idx[0]][1][-1]
-l_r = allparams[val_idx[0]][2][-1]
+val_idx = np.argsort(np.array(mean_vals)).astype(int)
+omega_r = allparams[val_idx[1]][0][-1]
+sigma_r = allparams[val_idx[1]][1][-1]
+l_r = allparams[val_idx[1]][2][-1]
 
 if (kPlot):
-    colors = ['dimgray', 'g', 'b', 'brown', 'peru', 'k', 'skyblue', 'y','indigo', 'goldenrod', 'lawngreen', 'r', 'orange', 'b']
+    colors = ['dimgray', 'g', 'b', 'brown', 'peru', 'skyblue', 'k', 'y','indigo', 'goldenrod', 'lawngreen', 'r', 'orange', 'b']
     # Plot loss function                                                                                                                  
     plt.subplot(131)
-    for i in range(N):
+    for i in val_idx[1:3]:
         plt.plot(np.array(allvals[i]), color=colors[i])
-        # plt.ylim(-2000, 20000)
+        plt.ylim(-1000, -200)
     # Plot sigma                                                                                                                          
     plt.subplot(132)
-    for i in range(N):
+    for i in val_idx[1:3]:
         sigma = allparams[i][1]
         plt.plot(sigma, color=colors[i])
     # Plot length scale (l)                                                                                                               
     plt.subplot(133)
-    for i in range(N):
+    for i in val_idx[1:3]:
         l = allparams[i][2]
         plt.plot(l, color=colors[i])
     plt.show()
 
 # Save optimized hyperparameters
-result_human = {'omega' : omega_h, 'sigma' : sigma_h, 'l' : l_h}
-f = open("hyperparameters_human.pkl", "wb")
-pickle.dump(result_human, f)
-f.close()
+if (kSave):
+    result_human = {'omega' : omega_h, 'sigma' : sigma_h, 'l' : l_h}
+    f = open("hyperparameters_human.pkl", "wb")
+    pickle.dump(result_human, f)
+    f.close()
 
-result_robot = {'omega' : omega_r, 'sigma' : sigma_r, 'l' : l_r}
-f = open("hyperparameters_robot.pkl", "wb")
-pickle.dump(result_robot, f)
-f.close()
+    result_robot = {'omega' : omega_r, 'sigma' : sigma_r, 'l' : l_r}
+    f = open("hyperparameters_robot.pkl", "wb")
+    pickle.dump(result_robot, f)
+    f.close()
 
 '''
 sigma_h = 10.75
