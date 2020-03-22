@@ -390,15 +390,6 @@ class Game:
         self.backImgScrollSpeed = 0
         self.exit = False
 
-    def background():
-        y = 10
-        backImg = pygame.image.load('background.PNG')
-        backImg = backImg.convert_alpha()
-        backImgHeight = backImg.get_rect().height
-        scrollY = y % backImgHeight
-        # self.screen.blit(backImg, (0, backImgHeight))
-        screen.blit(backImg, (0, scrollY - backImgHeight))
-
     def run(self):
         current_dir = os.path.dirname(os.path.abspath(__file__))
         image_path = os.path.join(current_dir, "user.PNG")

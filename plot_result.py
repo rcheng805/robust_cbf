@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
 result1 = np.load('comparison_results_v1.npy', allow_pickle=True)
 result2 = np.load('comparison_results_v2.npy', allow_pickle=True)
@@ -40,3 +41,24 @@ dist_robust_std = np.std(np.minimum(dist_robust[idx_collision] - coll_threshold,
 dist_primal_mean = np.mean(np.minimum(dist_primal[idx_collision] - coll_threshold, a))
 dist_primal_std = np.std(np.minimum(dist_primal[idx_collision] - coll_threshold, a))
 print("For collision trials, Average violation of CBF (robust) :  %.3f  +-  %.3f. Average violation of CBF (primal) :  %.3f  +-  %.3f." %  (dist_robust_mean, dist_robust_std, dist_primal_mean, dist_primal_std))
+
+dist_primal[dist_primal > 4.99] = 6
+dist_robust[dist_robust > 4.99] = 6
+total_dist = dist_primal + dist_robust
+sort_idx = np.argsort(total_dist)
+dist_primal = dist_primal[sort_idx]
+dist_robust = dist_robust[sort_idx]
+X = np.arange(N)
+
+plt.rcParams.update({'font.size': 18})
+plt.scatter(X, dist_primal,s=100.0,facecolors='none',edgecolors=(0.3,0.3,1.0))
+plt.scatter(X, dist_robust,s=100.0,facecolors='none',edgecolors=(1.0,0.5,0.0))
+plt.plot([-3,200],[5,5],'--',linewidth=3.0,c='black')
+plt.xlim([-3,170])
+plt.ylim([0,5.5])
+plt.title('Collision Distance vs. Trial')
+plt.xlabel('Trial Index (sorted)')
+plt.ylabel('Minimum Distance')
+plt.legend(['Collision Threshold','Nominal CBF', 'Robust CBF'])
+plt.tight_layout()
+plt.show()

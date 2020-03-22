@@ -410,3 +410,5 @@ if __name__ == '__main__':
     # Initialize GP with random hyperparameters
     # gp = GP(X, Y, l = 100*np.random.rand(), sigma = 5*np.random.rand(), noise = 0.0)
     # gp.load_parameters('hyperparameters_human.pkl')
+
+    # 20 x 20

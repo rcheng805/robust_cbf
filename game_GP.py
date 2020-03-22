@@ -6,8 +6,11 @@ from car import Car
 from control import get_trajectory, filter_output, filter_output_primal
 from GP_predict import GP
 
+from video import make_video
+
 kDraw = False
 kSave = True
+kVideo = False
 
 class Game:
     def __init__(self):
@@ -20,10 +23,17 @@ class Game:
         self.ticks = 60
         self.exit = False
 
-    def run(self, seed=None, robust=True):
+    def run(self, seed=None, robust=True, video=False, iteration=-1):
 
         ppu = 32
         T = 200
+
+        # Initiate video generator
+        if (video):
+            if (robust):
+                save_screen = make_video(self.screen, iteration, "robust")
+            else:
+                save_screen = make_video(self.screen, iteration, "primal")
 
         # Random Initialization Seed
         if (seed is not None):
@@ -31,9 +41,9 @@ class Game:
 
         # Initialize settings
         eps = 0.001
-        p_threshold = 1 - 0.95
+        p_threshold = 1 - 0.98
         dist_threshold = 1.0
-        coll_threshold = 4.99
+        coll_threshold = 4.9
         success = False
         collision_flag = False
         min_dist = np.inf
@@ -167,22 +177,24 @@ class Game:
                     all_gp[j].add_data(x_state[j,:], d_state[j,:])
                     all_gp[j].get_obs_covariance()
 
-            # Drawing
+            # Draw screen
+            self.screen.fill((220, 220, 220))
+            # Draw other agents
+            for j in range(1, N_a):
+                pygame.draw.circle(self.screen, [200, 0, 0], (agents[j].position*ppu).astype(int), 80)
+            # Draw our goal
+            agent1_goal = pygame.image.load('star.png')
+            rect = agent1_goal.get_rect()
+            self.screen.blit(agent1_goal, agents[0].goal * ppu -
+                            (rect.width / 2, rect.height / 2))
+            # Draw our agent
+            pygame.draw.circle(self.screen, [0, 0, 200], (agents[0].position*ppu).astype(int), 80)
             if (kDraw):
-                self.screen.fill((220, 220, 220))
-                # Draw other agents
-                for j in range(1, N_a):
-                    pygame.draw.circle(self.screen, [200, 0, 0], (agents[j].position*ppu).astype(int), 80)
-                # Draw our goal
-                agent1_goal = pygame.image.load('star.png')
-                rect = agent1_goal.get_rect()
-                self.screen.blit(agent1_goal, agents[0].goal * ppu -
-                                (rect.width / 2, rect.height / 2))
-                # Draw our agent
-                pygame.draw.circle(self.screen, [0, 0, 200], (agents[0].position*ppu).astype(int), 80)
-
                 pygame.display.flip()
             
+            if (kVideo):
+                next(save_screen)
+
             # Check if there is collision, or if goal is reached
             for j in range(1, N_a):
                 if (np.linalg.norm(agents[0].position - agents[j].position) < coll_threshold):
@@ -199,12 +211,14 @@ class Game:
                 pass
             
             self.clock.tick(self.ticks)
+        
         return data, data_u, success, collision_flag, i, min_dist
 
 
 if __name__ == '__main__':
     game = Game()
     print("Game Initialized")
+    repeat_flag = False
     data = []
     data_u = []
     trials = 1000
@@ -218,9 +232,12 @@ if __name__ == '__main__':
     result_dist_robust = []
     result_dist_primal = []
     for i in range(trials):
-        seed = np.random.randint(4e9)
-        _, _, success_robust, collision_robust, L_robust, dist_robust = game.run(seed=seed, robust=True)
-        _, _, success_primal, collision_primal, L_primal, dist_primal = game.run(seed=seed, robust=False)
+        if (repeat_flag):
+            kVideo = False #True
+        else:
+            seed = np.random.randint(4e9)
+        _, _, success_robust, collision_robust, L_robust, dist_robust = game.run(seed=seed, robust=True, video=kVideo, iteration=i)
+        _, _, success_primal, collision_primal, L_primal, dist_primal = game.run(seed=seed, robust=False, video=kVideo, iteration=i)
         result_success_robust.append(success_robust)
         result_collision_robust.append(collision_robust)
         result_L_robust.append(L_robust)
@@ -229,6 +246,11 @@ if __name__ == '__main__':
         result_collision_primal.append(collision_primal)
         result_L_primal.append(L_primal)
         result_dist_primal.append(dist_primal)
+        if (not collision_robust and collision_primal and not repeat_flag):
+            repeat_flag = False #True
+        else:
+            kVideo = False
+            repeat_flag = False
 
         print("Trial " + str(i) + " Completed")
         '''
@@ -245,4 +267,4 @@ if __name__ == '__main__':
             print("Trial " + str(i) + " ended in NO PATH in " + str(round(time.time() - start_time, 1)) + " sec")
         '''
         if (i % 10 == 0 and kSave):
-            np.save('comparison_results_' + str(start_time) + '.npy', [result_success_robust, result_success_primal, result_collision_robust, result_collision_primal, result_L_robust, result_L_primal, result_dist_robust, result_dist_primal])
+            np.save('comparison_results98_' + str(start_time) + '.npy', [result_success_robust, result_success_primal, result_collision_robust, result_collision_primal, result_L_robust, result_L_primal, result_dist_robust, result_dist_primal])
