@@ -33,8 +33,7 @@ def filter_output(agent_idx, agents, x_nom, T=1, G_all=None, g_all=None, m=None,
     zvh_max = 0.001
 
     for t in range(T):
-        # MPC Problem (u(0), x(1), lambda, eps)
-        # Minimize actuation deviation
+        # Set up QP to minimize actuation deviation
         dual_f = 16
         duals = dual_f*(N_a-1)
         P = np.zeros((7 + duals, 7 + duals))
@@ -86,9 +85,9 @@ def filter_output(agent_idx, agents, x_nom, T=1, G_all=None, g_all=None, m=None,
                 zph_max = z[j,0]
                 zvh_max = z[j,1]
 
+            # Define matrices in QP (see eq. 15 in paper)
             den_p = max(np.linalg.norm(fp - fp_h) + zp_max + zph_max, eps_m)
             den_m = max(np.linalg.norm(fp - fp_h) - zp_max - zph_max, eps_m)
-
             H1 = np.hstack([-(fv - fv_h) / den_m, -(fp - fp_h) / den_m, (fv - fv_h) / den_m, (fp - fp_h) / den_m ])
             H2 = np.hstack([ -gv / den_m , np.zeros((2,2)), gv / den_m, np.zeros((2,2)) ])
             H3 = -np.matmul((fp - fp_h), gv) / den_p
@@ -100,7 +99,6 @@ def filter_output(agent_idx, agents, x_nom, T=1, G_all=None, g_all=None, m=None,
                 g = np.kron(np.ones(2), np.array([zp_max, zp_max, zv_max, zv_max, zph_max, zph_max, zvh_max, zvh_max]))
             else:
                 g = g_all[j-1,:]
-
             kc = min(np.dot(fp - fp_h, fv - fv_h) / den_p, np.dot(fp - fp_h, fv - fv_h) / den_m) + np.sqrt(amax*(max(den_m - agents[agent_idx].Ds, 0.))) + (agents[agent_idx].gamma - 1)*np.sqrt(amax*(max(np.linalg.norm(pr - ph) - agents[agent_idx].Ds, 0.))) + (agents[agent_idx].gamma-1)*np.dot(pr - ph, vr - vh)/(max(np.linalg.norm(pr - ph), eps_m))
             h_l1 = np.expand_dims(np.hstack([H3, np.zeros(4), -1.0, np.zeros(dual_f*idx), g, np.zeros(dual_f*(len(agents)-2-idx))]), axis=0)
             h_l2 = np.hstack([np.transpose(H2), np.zeros((8, 4)), np.zeros((8,1)), np.zeros((8,dual_f*idx)), -np.transpose(G), np.zeros((8, dual_f*(len(agents)-2-idx)))])
@@ -109,7 +107,6 @@ def filter_output(agent_idx, agents, x_nom, T=1, G_all=None, g_all=None, m=None,
             lp = np.hstack((lp, -np.inf, h_r2 - 0.001*np.ones(8)))
             up = np.hstack((up, kc, h_r2 + 0.001*np.ones(8)))
             idx += 1
-
         h_l3 = np.hstack([np.zeros((duals, 7)), -np.eye(duals)])
         A_np = np.vstack([A_np, h_l3])
         lp = np.hstack((lp, -np.inf*np.ones(duals)))
@@ -122,12 +119,8 @@ def filter_output(agent_idx, agents, x_nom, T=1, G_all=None, g_all=None, m=None,
         res = prob.solve()
         if (t == 0):
             ctrl = res.x[0:2]
-            # pn, vn = agents[agent_idx].f(x0, ctrl)
-            # x_next = np.concatenate([pn, vn])
-        # pn, vn = agents[agent_idx].f_err(x0, ctrl)
-        # x0 = np.concatenate([pn, vn], axis=0)
 
-    return ctrl #, x0
+    return ctrl 
 
 def filter_output_primal(agent_idx, agents, x_nom, T=1):
     x0 = np.array([agents[agent_idx].position[0], agents[agent_idx].position[1],
@@ -204,6 +197,7 @@ def filter_output_primal(agent_idx, agents, x_nom, T=1):
 
     return ctrl
 
+# Get nominal trajectory to give us desired input
 def get_trajectory(agent, goal=None, N=12, agents=None, agent_idx=None):
     Ad, Bd = agent.update_linearization()
 

@@ -8,25 +8,22 @@ from GP_predict import GP
 
 from video import make_video
 
-kDraw = False
-kSave = True
+kDraw = True
+kSave = False
 kVideo = False
 
 class Game:
     def __init__(self):
-        # pygame.init()
-        pygame.display.set_caption("Car tutorial")
+        pygame.display.set_caption("CBF Test")
         self.width = 1024*3
         self.height = 1024*3
         self.screen = pygame.display.set_mode((self.width, self.height))
         self.clock = pygame.time.Clock()
         self.ticks = 60
-        self.exit = False
 
     def run(self, seed=None, robust=True, video=False, iteration=-1):
-
         ppu = 32
-        T = 200
+        T = 150     # Max simulation time
 
         # Initiate video generator
         if (video):
@@ -41,7 +38,7 @@ class Game:
 
         # Initialize settings
         eps = 0.001
-        p_threshold = 1 - 0.98
+        p_threshold = 1 - 0.95
         dist_threshold = 1.0
         coll_threshold = 4.9
         success = False
@@ -49,7 +46,7 @@ class Game:
         min_dist = np.inf
 
         # Initialize agents
-        N_a = np.random.randint(3, 12)
+        N_a = np.random.randint(3, 10)
         agents = [0] * N_a
         agents_ctrl = [0] * N_a
         # Set start point
@@ -84,10 +81,10 @@ class Game:
         next_state = np.zeros((N_a, 4))
         x_state = np.zeros((N_a, 4))
         d_state = np.zeros((N_a, 4))
-        all_gp.append(GP(None, None, omega = np.eye(4), l = 60.0, sigma = 8.5, noise = 0.01, horizon=40))     # Robot GP
+        all_gp.append(GP(None, None, omega = np.eye(4), l = 60.0, sigma = 8.5, noise = 0.01, horizon=15))     # Robot GP
         all_gp[0].load_parameters('hyperparameters_robot.pkl')
         for i in range(1, N_a):
-            all_gp.append(GP(None, None, omega = np.eye(4), l = 60.0, sigma = 8.5, noise = 0.01, horizon=40))    # Human GP
+            all_gp.append(GP(None, None, omega = np.eye(4), l = 60.0, sigma = 8.5, noise = 0.01, horizon=15))    # Human GP
             all_gp[i].load_parameters('hyperparameters_human.pkl')
         G_all = np.zeros((N_a-1, 8*2, 8))
         g_all = np.zeros((N_a-1, 8*2))
@@ -111,7 +108,7 @@ class Game:
                 # Obtain (CBF) controller for other agent (if applicable)
                 u2, x2_path, x2_0 = get_trajectory(agents[j])
                 if (agents[j].Ds > 0):
-                    u2 = filter_output(j, agents, x2_path)
+                    u2 = filter_output_primal(j, agents, x2_path)
                 agents_ctrl[j] = u2
                 # Get agent's states (for inference)
                 state[j,:] = x2_0 - x0
@@ -121,11 +118,11 @@ class Game:
             if (robust):
                 # Infer uncertainty polytope for robot and other agents
                 if (all_gp[0].N_data > 0):
+                    start_time = time.time()
                     m_d, cov_d = all_gp[0].predict(state[0,:])
                     G_r, g_r = all_gp[0].extract_box(cov_d, p_threshold=p_threshold)       # G: 8x4, g: 8x1
                     m_all[0,:] = m_d
                     z_all[0,0], z_all[0,1] = all_gp[0].extract_norms(cov_d, p_threshold=p_threshold)
-
                 for j in range(1, N_a):
                     if (all_gp[j].N_data > 0):
                         m_d, cov_d = all_gp[j].predict(state[j,:])
@@ -143,6 +140,7 @@ class Game:
 
                 # Obtain safe control given uncertainty polytopes
                 if (all_gp[0].N_data > 0):
+                    start_time = time.time()
                     u = filter_output(0, agents, x_path, G_all=G_all, g_all=g_all, m=m_all, z=z_all)
                 else:
                     u = filter_output(0, agents, x_path)
@@ -171,6 +169,7 @@ class Game:
             
             # Update GPs
             if (robust):
+                start_time = time.time()
                 all_gp[0].add_data(x_state[0,:], d_state[0,:])
                 all_gp[0].get_obs_covariance()
                 for j in range(1, N_a):
@@ -200,7 +199,6 @@ class Game:
                 if (np.linalg.norm(agents[0].position - agents[j].position) < coll_threshold):
                     success = False
                     collision_flag = True 
-
             if (np.linalg.norm(agents[0].position - agents[0].goal) < dist_threshold and collision_flag):
                 success = False
                 break
@@ -211,6 +209,7 @@ class Game:
                 pass
             
             self.clock.tick(self.ticks)
+            time.sleep(0.1)
         
         return data, data_u, success, collision_flag, i, min_dist
 
@@ -223,6 +222,7 @@ if __name__ == '__main__':
     data_u = []
     trials = 1000
     start_time = time.time()
+    # Initialize list for storing results
     result_success_robust = []
     result_success_primal = []
     result_collision_robust = []
@@ -235,9 +235,14 @@ if __name__ == '__main__':
         if (repeat_flag):
             kVideo = False #True
         else:
+            # Set seed for random environment
             seed = np.random.randint(4e9)
+        # Run Robust CBF with uncertainty prediction
         _, _, success_robust, collision_robust, L_robust, dist_robust = game.run(seed=seed, robust=True, video=kVideo, iteration=i)
+        # Run Nominal CBF without uncertainty prediction
         _, _, success_primal, collision_primal, L_primal, dist_primal = game.run(seed=seed, robust=False, video=kVideo, iteration=i)
+
+        # Store results
         result_success_robust.append(success_robust)
         result_collision_robust.append(collision_robust)
         result_L_robust.append(L_robust)
@@ -251,20 +256,8 @@ if __name__ == '__main__':
         else:
             kVideo = False
             repeat_flag = False
-
         print("Trial " + str(i) + " Completed")
-        '''
-        dat_trial, dat_u_trial, success, collision = game.run()
-        data.append(dat_trial)
-        data_u.append(dat_u_trial)
-        '''
-        '''
-        if (success_robust):
-            print("Trial " + str(i) + " ended in SUCCESS in " + str(round(time.time() - start_time, 1)) + " sec")
-        elif (collision_robust):
-            print("Trial " + str(i) + " ended in COLLISION in " + str(round(time.time() - start_time, 1)) + " sec")
-        else:
-            print("Trial " + str(i) + " ended in NO PATH in " + str(round(time.time() - start_time, 1)) + " sec")
-        '''
+
+        # Save results comparing Robust vs. Nominal CBF (if kSave flag is set)
         if (i % 10 == 0 and kSave):
-            np.save('comparison_results98_' + str(start_time) + '.npy', [result_success_robust, result_success_primal, result_collision_robust, result_collision_primal, result_L_robust, result_L_primal, result_dist_robust, result_dist_primal])
+            np.save('comparison_results_' + str(start_time) + '.npy', [result_success_robust, result_success_primal, result_collision_robust, result_collision_primal, result_L_robust, result_L_primal, result_dist_robust, result_dist_primal])
